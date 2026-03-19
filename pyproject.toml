@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling>=1.25.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dcnr-minisandbox"            # <-- change to a unique name on (Test)PyPI
+version = "1.0.4"
+description = "Minisandbox for Python interpreter."
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "Peter Kollath", email = "peter.kollath@gopal.home.sk" }]
+license = { text = "MIT" }
+keywords = ["python", "interpreter", "parser", "functional-programming", "sandbox"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://dcnr-utilities.com/minisandbox"
+
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dcnr"]
+only-include = ["src/dcnr/minisandbox", "src/dcnr/lpc", "src/dcnr/mangodb"]
