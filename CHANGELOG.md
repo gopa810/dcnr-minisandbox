@@ -5,13 +5,29 @@ All notable changes to dcnr-minisandbox will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.4] - 2026-03-28
+## [1.0.7] - 2026-03-30
+
+### Added
+
+- debug option for interpreter evaluation
+
+## [1.0.6] - 2026-03-26
+
+### Fix
+
+- use function also from `env`, not only `allowed_functions`
+
+### Added
+
+- added classes `TrackedDict` and `SandboxInterpreter`
+
+## [1.0.4] - 2026-03-18
 
 ### Added
 
 - MangoDatabase for in-memory data storage
 
-## [1.0.3] - 2026-03-28
+## [1.0.3] - 2026-03-18
 
 ### Added
 

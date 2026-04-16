@@ -22,13 +22,15 @@ pip install dcnr-minisandbox
 
 This package provides three main components:
 
-1. **Sandbox Interpreter** (`sandbox_exec`) - Secure execution of Python code with AST validation
+1. **Sandbox Interpreter** (`SandboxInterpreter`, `sandbox_exec`) - Secure execution of Python code with AST validation
 2. **Object Registry** (`get_registry`, `register_object`) - Global hierarchical storage for application objects
 3. **LPC (Local Procedure Call)** (`register_proc`, `exec`) - Anonymous execution of registered methods
 
 ## Quick Start
 
 ### Sandbox Execution
+
+The sandbox can be used either via the convenience function `sandbox_exec` or directly through the `SandboxInterpreter` class.
 
 ```python
 from dcnr.minisandbox import sandbox_exec
@@ -161,9 +163,7 @@ For security reasons, the following are **not allowed**:
 - **File I/O**: No file operations or system calls
 - **Advanced features**: No comprehensions, generators, decorators, or async code
 
-## Global Object Registry
-
-The registry provides a hierarchical namespace for storing and accessing application objects, functions, and configuration data.
+## Global Object Registry for storing and accessing application objects, functions, and configuration data.
 
 ### Registry Features
 
@@ -218,6 +218,213 @@ register_object("app.__class__.x", 1)     # Names starting with '_' not allowed
 register_object("app.for.x", 1)          # 'for' is a Python keyword
 register_object("app..x", 1)             # Empty components not allowed
 ```
+
+## SandboxInterpreter Class
+
+For advanced use cases, use `SandboxInterpreter` directly. This gives you full control over the interpreter lifecycle, debug logging, and the ability to inject callable functions that interact with the sandbox environment.
+
+### Basic Class Usage
+
+```python
+from dcnr.minisandbox import SandboxInterpreter
+
+interp = SandboxInterpreter(variables={"x": 10, "y": 5})
+env = interp.execute("result = x + y")
+print(env["result"])  # 15
+
+# Re-use the same instance for multiple executions
+# (environment accumulates across calls)
+interp.execute("z = result * 2")
+print(interp.env["z"])  # 30
+```
+
+### Debug Mode
+
+`SandboxInterpreter` has a built-in debug buffer that records every statement, its input values and its result in execution order.
+
+```python
+from dcnr.minisandbox import SandboxInterpreter
+
+interp = SandboxInterpreter(debug=True)
+interp.execute("""
+x = 4
+y = x * 3
+items = [1, 2, 3]
+items.append(y)
+""")
+
+print(interp.get_debug_log())
+```
+
+Example output:
+
+```
+[Constant]
+  => 4
+[Assign.Name]
+  name: 'x'
+  => 4
+[Assign]
+  targets: ['x']
+  value: 4
+  => 4
+[BinOp]
+  op: 'Mult'
+  left: 4
+  right: 3
+  => 12
+...
+```
+
+Debug mode can also be toggled at runtime and the buffer cleared between executions:
+
+```python
+interp = SandboxInterpreter()         # debug off by default
+interp.set_debug(True)
+interp.execute("a = 1 + 2")
+log = interp.get_debug_log()
+interp.clear_debug_log()              # reset buffer for next run
+```
+
+### Registering Callable Functions in the Environment
+
+Any callable placed in the `variables` dict is directly callable from sandbox code by its key name. This is the primary mechanism for extending the sandbox with host-side logic.
+
+```python
+from dcnr.minisandbox import SandboxInterpreter
+
+def fetch_price(product_id):
+    prices = {1: 9.99, 2: 14.99, 3: 4.49}
+    return prices.get(product_id, 0.0)
+
+interp = SandboxInterpreter(variables={"fetch_price": fetch_price})
+env = interp.execute("""
+price = fetch_price(2)
+total = price * 3
+""")
+print(env["total"])  # 44.97
+```
+
+### Writing Back to the Sandbox Environment from a Registered Function
+
+A registered function can write values directly into `interp.env` so those values appear as normal variables in the dict returned by `execute()`. The cleanest approach is to **close over `interp.env`** using a factory function:
+
+```python
+from dcnr.minisandbox import SandboxInterpreter
+
+def make_env_writer(env):
+    """Return a callable the sandbox can call to write a named variable."""
+    def set_var(name, value):
+        env[name] = value
+    return set_var
+
+interp = SandboxInterpreter()
+# Register after creation so the closure captures the live env dict
+interp.env["set_var"] = make_env_writer(interp.env)
+
+env = interp.execute("""
+set_var("status", "done")
+set_var("count", 42)
+""")
+
+print(env["status"])  # "done"
+print(env["count"])   # 42
+```
+
+A more elaborate example — a host-side function that fetches a record and writes multiple result variables back into the sandbox:
+
+```python
+from dcnr.minisandbox import SandboxInterpreter
+
+def make_db_fetch(env):
+    database = {
+        1: {"name": "Alice", "score": 95},
+        2: {"name": "Bob",   "score": 82},
+    }
+    def db_fetch(record_id):
+        record = database.get(record_id)
+        if record:
+            for key, value in record.items():
+                env[key] = value      # each field becomes a sandbox variable
+            env["found"] = True
+        else:
+            env["found"] = False
+    return db_fetch
+
+interp = SandboxInterpreter(variables={"user_id": 1})
+interp.env["db_fetch"] = make_db_fetch(interp.env)
+
+env = interp.execute("""
+db_fetch(user_id)
+if found:
+    result = name + " scored " + str(score)
+""")
+
+print(env["result"])  # "Alice scored 95"
+```
+
+### TrackedDict
+
+`TrackedDict` is a `dict` subclass that records which keys were **written** or **deleted** since the last `clear_updates()` call. Pass it as the `variables` argument to observe exactly what the sandbox script produced or modified, without inspecting the whole environment.
+
+```python
+from dcnr.minisandbox import SandboxInterpreter, TrackedDict
+
+initial = TrackedDict({"x": 10, "y": 5})
+interp = SandboxInterpreter(variables=initial)
+env = interp.execute("""
+result = x + y
+label  = "sum"
+""")
+
+# Only keys written during execution are reported
+for key, value in env.updated_items():
+    print(f"  {key} = {value!r}")
+# result = 15
+# label  = 'sum'
+
+print(env.deleted_keys())  # []
+```
+
+#### Resetting the Tracker Between Runs
+
+Call `clear_updates()` before each `execute()` call to get only the changes from that specific run:
+
+```python
+env.clear_updates()
+interp.execute("z = result * 2")
+
+new_writes = dict(env.updated_items())
+print(new_writes)  # {'z': 20}
+```
+
+#### Combining TrackedDict with a Registered Writer Function
+
+`TrackedDict` works transparently with the env-writer pattern — writes made by the registered function are tracked just like writes made by sandbox statements:
+
+```python
+from dcnr.minisandbox import SandboxInterpreter, TrackedDict
+
+tracked = TrackedDict()
+interp = SandboxInterpreter(variables=tracked)
+interp.env["set_var"] = lambda name, value: tracked.__setitem__(name, value)
+
+interp.execute("""
+set_var("api_result", 42)
+total = api_result * 2
+""")
+
+print(dict(tracked.updated_items()))
+# {'api_result': 42, 'total': 84}
+```
+
+#### TrackedDict API Reference
+
+| Method | Description |
+|---|---|
+| `updated_items()` | Generator of `(key, value)` for every key written since last `clear_updates()` |
+| `deleted_keys()` | List of keys deleted since last `clear_updates()` |
+| `clear_updates()` | Reset both the written and deleted sets |
 
 ## LPC (Local Procedure Call)
 
